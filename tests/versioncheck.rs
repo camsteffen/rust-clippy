@@ -1,6 +1,7 @@
 #![allow(clippy::single_match_else)]
 use rustc_tools_util::VersionInfo;
 
+/*
 #[test]
 fn check_that_clippy_lints_and_clippy_utils_have_the_same_version_as_clippy() {
     let clippy_meta = cargo_metadata::MetadataCommand::new()
@@ -23,6 +24,7 @@ fn check_that_clippy_lints_and_clippy_utils_have_the_same_version_as_clippy() {
         }
     }
 }
+*/
 
 #[test]
 fn check_that_clippy_has_the_same_major_version_as_rustc() {
