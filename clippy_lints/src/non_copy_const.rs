@@ -16,6 +16,7 @@ use rustc_middle::ty::adjustment::Adjust;
 use rustc_middle::ty::{self, AssocKind, Const, Ty};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 use rustc_span::{InnerSpan, Span, DUMMY_SP};
+use rustc_target::abi::LayoutOf;
 use rustc_typeck::hir_ty_to_ty;
 
 use crate::utils::{in_constant, span_lint_and_then};
@@ -121,7 +122,7 @@ fn is_unfrozen<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
     // since it works when a pointer indirection involves (`Cell<*const T>`).
     // Making up a `ParamEnv` where every generic params and assoc types are `Freeze`is another option;
     // but I'm not sure whether it's a decent way, if possible.
-    cx.tcx.layout_of(cx.param_env.and(ty)).is_ok() && !ty.is_freeze(cx.tcx.at(DUMMY_SP), cx.param_env)
+    cx.layout_of(ty).is_ok() && !ty.is_freeze(cx.tcx.at(DUMMY_SP), cx.param_env)
 }
 
 fn is_value_unfrozen_raw<'tcx>(

@@ -27,6 +27,7 @@ use rustc_semver::RustcVersion;
 use rustc_session::{declare_tool_lint, impl_lint_pass};
 use rustc_span::source_map::Span;
 use rustc_span::symbol::{sym, SymbolStr};
+use rustc_target::abi::LayoutOf;
 use rustc_typeck::hir_ty_to_ty;
 
 use crate::consts::{constant, Constant};
@@ -4169,7 +4170,7 @@ fn check_pointer_offset(cx: &LateContext<'_>, expr: &hir::Expr<'_>, args: &[hir:
     if_chain! {
         if args.len() == 2;
         if let ty::RawPtr(ty::TypeAndMut { ref ty, .. }) = cx.typeck_results().expr_ty(&args[0]).kind();
-        if let Ok(layout) = cx.tcx.layout_of(cx.param_env.and(ty));
+        if let Ok(layout) = cx.layout_of(ty);
         if layout.is_zst();
         then {
             span_lint(cx, ZST_OFFSET, expr.span, "offset calculation on zero-sized value");

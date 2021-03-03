@@ -5,6 +5,7 @@ use rustc_middle::ty::TypeFoldable;
 use rustc_middle::ty::{Adt, Array, RawPtr, Ref, Slice, Tuple, Ty, TypeAndMut};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 use rustc_span::source_map::Span;
+use rustc_target::abi::LayoutOf;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for sets/maps with mutable key types.
@@ -118,9 +119,7 @@ fn is_mutable_type<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, span: Span) -> bo
         },
         Tuple(..) => ty.tuple_fields().any(|ty| is_mutable_type(cx, ty, span)),
         Adt(..) => {
-            cx.tcx.layout_of(cx.param_env.and(ty)).is_ok()
-                && !ty.has_escaping_bound_vars()
-                && !ty.is_freeze(cx.tcx.at(span), cx.param_env)
+            cx.layout_of(ty).is_ok() && !ty.has_escaping_bound_vars() && !ty.is_freeze(cx.tcx.at(span), cx.param_env)
         },
         _ => false,
     }
