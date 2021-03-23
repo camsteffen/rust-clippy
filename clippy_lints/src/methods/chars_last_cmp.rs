@@ -5,9 +5,9 @@ use super::CHARS_LAST_CMP;
 
 /// Checks for the `CHARS_LAST_CMP` lint.
 pub(super) fn check<'tcx>(cx: &LateContext<'tcx>, info: &crate::methods::BinaryExprInfo<'_>) -> bool {
-    if chars_cmp::check(cx, info, &["chars", "last"], CHARS_LAST_CMP, "ends_with") {
+    if chars_cmp::check(cx, info, "last", CHARS_LAST_CMP, "ends_with") {
         true
     } else {
-        chars_cmp::check(cx, info, &["chars", "next_back"], CHARS_LAST_CMP, "ends_with")
+        chars_cmp::check(cx, info, "next_back", CHARS_LAST_CMP, "ends_with")
     }
 }

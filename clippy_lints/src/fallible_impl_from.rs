@@ -1,6 +1,5 @@
 use clippy_utils::diagnostics::span_lint_and_then;
-use clippy_utils::ty::is_type_diagnostic_item;
-use clippy_utils::{is_expn_of, match_panic_def_id, method_chain_args};
+use clippy_utils::{is_expn_of, match_panic_def_id};
 use if_chain::if_chain;
 use rustc_hir as hir;
 use rustc_lint::{LateContext, LateLintPass};
@@ -92,12 +91,15 @@ fn lint_impl_body<'tcx>(cx: &LateContext<'tcx>, impl_span: Span, impl_items: &[h
             }
 
             // check for `unwrap`
-            if let Some(arglists) = method_chain_args(expr, &["unwrap"]) {
-                let reciever_ty = self.typeck_results.expr_ty(&arglists[0][0]).peel_refs();
-                if is_type_diagnostic_item(self.lcx, reciever_ty, sym::option_type)
-                    || is_type_diagnostic_item(self.lcx, reciever_ty, sym::result_type)
-                {
-                    self.result.push(expr.span);
+            if let ExprKind::MethodCall(name, _, [recv], _) = expr.kind {
+                if name.ident.name == sym::unwrap {
+                    if let Some(adt) = self.typeck_results.expr_ty(recv).peel_refs().ty_adt_def() {
+                        if self.lcx.tcx.is_diagnostic_item(sym::option_type, adt.did)
+                            || self.lcx.tcx.is_diagnostic_item(sym::result_type, adt.did)
+                        {
+                            self.result.push(expr.span);
+                        }
+                    }
                 }
             }
 
