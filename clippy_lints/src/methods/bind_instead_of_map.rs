@@ -2,7 +2,7 @@ use super::{contains_return, BIND_INSTEAD_OF_MAP};
 use clippy_utils::diagnostics::{multispan_sugg_with_applicability, span_lint_and_sugg, span_lint_and_then};
 use clippy_utils::source::{snippet, snippet_with_macro_callsite};
 use clippy_utils::ty::match_type;
-use clippy_utils::{in_macro, match_qpath, method_calls, paths, remove_blocks, visitors::find_all_ret_expressions};
+use clippy_utils::{in_macro, match_qpath, paths, remove_blocks, visitors::find_all_ret_expressions};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir as hir;
@@ -139,22 +139,28 @@ pub(crate) trait BindInsteadOfMap {
                 }
             }
         });
-
-        if can_sugg {
-            span_lint_and_then(cx, BIND_INSTEAD_OF_MAP, expr.span, Self::lint_msg().as_ref(), |diag| {
-                multispan_sugg_with_applicability(
-                    diag,
-                    "try this",
-                    Applicability::MachineApplicable,
-                    std::iter::once((*method_calls(expr, 1).2.get(0).unwrap(), Self::GOOD_METHOD_NAME.into())).chain(
-                        suggs
-                            .into_iter()
-                            .map(|(span1, span2)| (span1, snippet(cx, span2, "_").into())),
-                    ),
-                )
-            });
+        if !can_sugg {
+            return false;
         }
-        can_sugg
+
+        let span = match expr.kind {
+            hir::ExprKind::MethodCall(_, span, ..) => span,
+            _ => return false,
+        };
+
+        span_lint_and_then(cx, BIND_INSTEAD_OF_MAP, expr.span, Self::lint_msg().as_ref(), |diag| {
+            multispan_sugg_with_applicability(
+                diag,
+                "try this",
+                Applicability::MachineApplicable,
+                std::iter::once((span, Self::GOOD_METHOD_NAME.into())).chain(
+                    suggs
+                        .into_iter()
+                        .map(|(span1, span2)| (span1, snippet(cx, span2, "_").into())),
+                ),
+            )
+        });
+        true
     }
 
     /// Lint use of `_.and_then(|x| Some(y))` for `Option`s

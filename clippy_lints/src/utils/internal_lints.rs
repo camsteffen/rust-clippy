@@ -3,7 +3,7 @@ use clippy_utils::diagnostics::{span_lint, span_lint_and_help, span_lint_and_sug
 use clippy_utils::source::snippet;
 use clippy_utils::ty::match_type;
 use clippy_utils::{
-    is_else_clause, is_expn_of, match_def_path, match_qpath, method_calls, path_to_res, paths, run_lints, SpanlessEq,
+    is_else_clause, is_expn_of, match_def_path, match_qpath, path_to_res, paths, run_lints, SpanlessEq,
 };
 use if_chain::if_chain;
 use rustc_ast::ast::{Crate as AstCrate, ItemKind, LitKind, ModKind, NodeId};
@@ -526,21 +526,18 @@ impl<'tcx> LateLintPass<'tcx> for OuterExpnDataPass {
             return;
         }
 
-        let (method_names, arg_lists, spans) = method_calls(expr, 2);
-        let method_names: Vec<SymbolStr> = method_names.iter().map(|s| s.as_str()).collect();
-        let method_names: Vec<&str> = method_names.iter().map(|s| &**s).collect();
         if_chain! {
-            if let ["expn_data", "outer_expn"] = method_names.as_slice();
-            let args = arg_lists[1];
-            if args.len() == 1;
-            let self_arg = &args[0];
+            if let ExprKind::MethodCall(name, _, [recv], _) = expr.kind;
+            if name.ident.as_str() == "expn_data";
+            if let ExprKind::MethodCall(name, span, [self_arg], _) = recv.kind;
+            if name.ident.as_str() == "outer_expn";
             let self_ty = cx.typeck_results().expr_ty(self_arg).peel_refs();
             if match_type(cx, self_ty, &paths::SYNTAX_CONTEXT);
             then {
                 span_lint_and_sugg(
                     cx,
                     OUTER_EXPN_EXPN_DATA,
-                    spans[1].with_hi(expr.span.hi()),
+                    span.with_hi(expr.span.hi()),
                     "usage of `outer_expn().expn_data()`",
                     "try",
                     "outer_expn_data()".to_string(),

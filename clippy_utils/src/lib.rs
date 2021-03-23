@@ -514,34 +514,6 @@ pub fn trait_ref_of_method<'tcx>(cx: &LateContext<'tcx>, hir_id: HirId) -> Optio
     None
 }
 
-/// Returns the method names and argument list of nested method call expressions that make up
-/// `expr`. method/span lists are sorted with the most recent call first.
-pub fn method_calls<'tcx>(
-    expr: &'tcx Expr<'tcx>,
-    max_depth: usize,
-) -> (Vec<Symbol>, Vec<&'tcx [Expr<'tcx>]>, Vec<Span>) {
-    let mut method_names = Vec::with_capacity(max_depth);
-    let mut arg_lists = Vec::with_capacity(max_depth);
-    let mut spans = Vec::with_capacity(max_depth);
-
-    let mut current = expr;
-    for _ in 0..max_depth {
-        if let ExprKind::MethodCall(path, span, args, _) = &current.kind {
-            if args.iter().any(|e| e.span.from_expansion()) {
-                break;
-            }
-            method_names.push(path.ident.name);
-            arg_lists.push(&**args);
-            spans.push(*span);
-            current = &args[0];
-        } else {
-            break;
-        }
-    }
-
-    (method_names, arg_lists, spans)
-}
-
 /// Matches an `Expr` against a chain of methods, and return the matched `Expr`s.
 ///
 /// For example, if `expr` represents the `.baz()` in `foo.bar().baz()`,
