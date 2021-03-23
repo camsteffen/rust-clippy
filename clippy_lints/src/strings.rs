@@ -2,7 +2,7 @@ use clippy_utils::diagnostics::{span_lint, span_lint_and_help, span_lint_and_sug
 use clippy_utils::source::{snippet, snippet_with_applicability};
 use clippy_utils::ty::is_type_diagnostic_item;
 use clippy_utils::SpanlessEq;
-use clippy_utils::{get_parent_expr, is_allowed, match_function_call, method_calls, paths};
+use clippy_utils::{get_parent_expr, is_allowed, match_function_call, paths};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir::{BinOpKind, BorrowKind, Expr, ExprKind, LangItem, QPath};
@@ -212,19 +212,14 @@ impl<'tcx> LateLintPass<'tcx> for StringLitAsBytes {
             // Find string::as_bytes
             if let ExprKind::AddrOf(BorrowKind::Ref, _, args) = args[0].kind;
             if let ExprKind::Index(left, right) = args.kind;
-            let (method_names, expressions, _) = method_calls(left, 1);
-            if method_names.len() == 1;
-            if expressions.len() == 1;
-            if expressions[0].len() == 1;
-            if method_names[0] == sym!(as_bytes);
+            if let ExprKind::MethodCall(name, _, [string_expression], _) = left.kind;
+            if name.ident.as_str() == "as_bytes";
 
             // Check for slicer
             if let ExprKind::Struct(QPath::LangItem(LangItem::Range, _), _, _) = right.kind;
 
             then {
                 let mut applicability = Applicability::MachineApplicable;
-                let string_expression = &expressions[0][0];
-
                 let snippet_app = snippet_with_applicability(
                     cx,
                     string_expression.span, "..",
