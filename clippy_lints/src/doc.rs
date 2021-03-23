@@ -1,6 +1,6 @@
 use clippy_utils::diagnostics::{span_lint, span_lint_and_note};
 use clippy_utils::ty::{implements_trait, is_type_diagnostic_item};
-use clippy_utils::{is_entrypoint_fn, is_expn_of, match_panic_def_id, method_chain_args, return_ty};
+use clippy_utils::{is_entrypoint_fn, is_expn_of, match_panic_def_id, return_ty};
 use if_chain::if_chain;
 use itertools::Itertools;
 use rustc_ast::ast::{Async, AttrKind, Attribute, FnKind, FnRetTy, ItemKind};
@@ -722,11 +722,14 @@ impl<'a, 'tcx> Visitor<'tcx> for FindPanicUnwrap<'a, 'tcx> {
         }
 
         // check for `unwrap`
-        if let Some(arglists) = method_chain_args(expr, &["unwrap"]) {
-            let reciever_ty = self.typeck_results.expr_ty(&arglists[0][0]).peel_refs();
-            if is_type_diagnostic_item(self.cx, reciever_ty, sym::option_type)
-                || is_type_diagnostic_item(self.cx, reciever_ty, sym::result_type)
-            {
+        if_chain! {
+            if let ExprKind::MethodCall(name, _, [recv], _) = expr.kind;
+            if name.ident.name == sym::unwrap;
+            if !expr.span.from_expansion();
+            if let Some(adt) = self.typeck_results.expr_ty(recv).peel_refs().ty_adt_def();
+            if self.cx.tcx.is_diagnostic_item(sym::option_type, adt.did)
+                || self.cx.tcx.is_diagnostic_item(sym::result_type, adt.did);
+            then {
                 self.panic_span = Some(expr.span);
             }
         }

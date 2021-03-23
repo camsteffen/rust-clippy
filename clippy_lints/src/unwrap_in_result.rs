@@ -1,10 +1,10 @@
 use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::return_ty;
 use clippy_utils::ty::is_type_diagnostic_item;
-use clippy_utils::{method_chain_args, return_ty};
 use if_chain::if_chain;
 use rustc_hir as hir;
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
-use rustc_hir::{Expr, ImplItemKind};
+use rustc_hir::{Expr, ExprKind, ImplItemKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::hir::map::Map;
 use rustc_middle::ty;
@@ -80,27 +80,17 @@ impl<'a, 'tcx> Visitor<'tcx> for FindExpectUnwrap<'a, 'tcx> {
     type Map = Map<'tcx>;
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'_>) {
-        // check for `expect`
-        if let Some(arglists) = method_chain_args(expr, &["expect"]) {
-            let reciever_ty = self.typeck_results.expr_ty(&arglists[0][0]).peel_refs();
-            if is_type_diagnostic_item(self.lcx, reciever_ty, sym::option_type)
-                || is_type_diagnostic_item(self.lcx, reciever_ty, sym::result_type)
-            {
-                self.result.push(expr.span);
+        if let ExprKind::MethodCall(name, _, [recv, ..], _) = expr.kind {
+            if matches!(name.ident.name, sym::expect | sym::unwrap) {
+                if let Some(adt) = self.typeck_results.expr_ty(recv).peel_refs().ty_adt_def() {
+                    if self.lcx.tcx.is_diagnostic_item(sym::option_type, adt.did)
+                        || self.lcx.tcx.is_diagnostic_item(sym::result_type, adt.did)
+                    {
+                        self.result.push(expr.span);
+                    }
+                }
             }
         }
-
-        // check for `unwrap`
-        if let Some(arglists) = method_chain_args(expr, &["unwrap"]) {
-            let reciever_ty = self.typeck_results.expr_ty(&arglists[0][0]).peel_refs();
-            if is_type_diagnostic_item(self.lcx, reciever_ty, sym::option_type)
-                || is_type_diagnostic_item(self.lcx, reciever_ty, sym::result_type)
-            {
-                self.result.push(expr.span);
-            }
-        }
-
-        // and check sub-expressions
         intravisit::walk_expr(self, expr);
     }
 

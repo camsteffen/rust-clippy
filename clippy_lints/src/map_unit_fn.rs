@@ -1,7 +1,7 @@
 use clippy_utils::diagnostics::span_lint_and_then;
+use clippy_utils::iter_input_pats;
 use clippy_utils::source::snippet;
 use clippy_utils::ty::is_type_diagnostic_item;
-use clippy_utils::{iter_input_pats, method_chain_args};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir as hir;
@@ -204,9 +204,13 @@ fn suggestion_msg(function_type: &str, map_type: &str) -> String {
     )
 }
 
-fn lint_map_unit_fn(cx: &LateContext<'_>, stmt: &hir::Stmt<'_>, expr: &hir::Expr<'_>, map_args: &[hir::Expr<'_>]) {
-    let var_arg = &map_args[0];
-
+fn lint_map_unit_fn(
+    cx: &LateContext<'_>,
+    stmt: &hir::Stmt<'_>,
+    expr: &hir::Expr<'_>,
+    var_arg: &hir::Expr<'_>,
+    fn_arg: &hir::Expr<'_>,
+) {
     let (map_type, variant, lint) =
         if is_type_diagnostic_item(cx, cx.typeck_results().expr_ty(var_arg), sym::option_type) {
             ("Option", "Some", OPTION_MAP_UNIT_FN)
@@ -215,7 +219,6 @@ fn lint_map_unit_fn(cx: &LateContext<'_>, stmt: &hir::Stmt<'_>, expr: &hir::Expr
         } else {
             return;
         };
-    let fn_arg = &map_args[1];
 
     if is_unit_function(cx, fn_arg) {
         let msg = suggestion_msg("function", map_type);
@@ -268,8 +271,10 @@ impl<'tcx> LateLintPass<'tcx> for MapUnit {
         }
 
         if let hir::StmtKind::Semi(ref expr) = stmt.kind {
-            if let Some(arglists) = method_chain_args(expr, &["map"]) {
-                lint_map_unit_fn(cx, stmt, expr, arglists[0]);
+            if let hir::ExprKind::MethodCall(name, _, [recv, arg], _) = expr.kind {
+                if name.ident.name == sym::map {
+                    lint_map_unit_fn(cx, stmt, expr, recv, arg);
+                }
             }
         }
     }

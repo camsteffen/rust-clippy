@@ -514,36 +514,6 @@ pub fn trait_ref_of_method<'tcx>(cx: &LateContext<'tcx>, hir_id: HirId) -> Optio
     None
 }
 
-/// Matches an `Expr` against a chain of methods, and return the matched `Expr`s.
-///
-/// For example, if `expr` represents the `.baz()` in `foo.bar().baz()`,
-/// `method_chain_args(expr, &["bar", "baz"])` will return a `Vec`
-/// containing the `Expr`s for
-/// `.bar()` and `.baz()`
-pub fn method_chain_args<'a>(expr: &'a Expr<'_>, methods: &[&str]) -> Option<Vec<&'a [Expr<'a>]>> {
-    let mut current = expr;
-    let mut matched = Vec::with_capacity(methods.len());
-    for method_name in methods.iter().rev() {
-        // method chains are stored last -> first
-        if let ExprKind::MethodCall(ref path, _, ref args, _) = current.kind {
-            if path.ident.name.as_str() == *method_name {
-                if args.iter().any(|e| e.span.from_expansion()) {
-                    return None;
-                }
-                matched.push(&**args); // build up `matched` backwards
-                current = &args[0] // go to parent expression
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    // Reverse `matched` so that it is in the same order as `methods`.
-    matched.reverse();
-    Some(matched)
-}
-
 /// Returns `true` if the provided `def_id` is an entrypoint to a program.
 pub fn is_entrypoint_fn(cx: &LateContext<'_>, def_id: DefId) -> bool {
     cx.tcx
