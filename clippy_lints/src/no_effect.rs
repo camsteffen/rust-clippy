@@ -1,4 +1,5 @@
 use clippy_utils::diagnostics::{span_lint, span_lint_and_sugg};
+use clippy_utils::peel_expr_blocks;
 use clippy_utils::source::snippet_opt;
 use clippy_utils::ty::has_drop;
 use rustc_errors::Applicability;
@@ -48,7 +49,7 @@ fn has_no_effect(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
     if expr.span.from_expansion() {
         return false;
     }
-    match expr.kind {
+    match peel_expr_blocks(expr).kind {
         ExprKind::Lit(..) | ExprKind::Closure(..) => true,
         ExprKind::Path(..) => !has_drop(cx, cx.typeck_results().expr_ty(expr)),
         ExprKind::Index(ref a, ref b) | ExprKind::Binary(_, ref a, ref b) => {
@@ -80,9 +81,6 @@ fn has_no_effect(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
             } else {
                 false
             }
-        },
-        ExprKind::Block(ref block, _) => {
-            block.stmts.is_empty() && block.expr.as_ref().map_or(false, |expr| has_no_effect(cx, expr))
         },
         _ => false,
     }

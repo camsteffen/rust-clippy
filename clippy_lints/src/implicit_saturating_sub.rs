@@ -1,9 +1,9 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
-use clippy_utils::{in_macro, match_qpath, SpanlessEq};
+use clippy_utils::{in_macro, match_qpath, peel_expr_or_stmt_blocks, SpanlessEq};
 use if_chain::if_chain;
 use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use rustc_hir::{BinOpKind, Expr, ExprKind, QPath, StmtKind};
+use rustc_hir::{BinOpKind, Expr, ExprKind, QPath};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 
@@ -51,12 +51,8 @@ impl<'tcx> LateLintPass<'tcx> for ImplicitSaturatingSub {
             // Ensure that the binary operator is >, != and <
             if BinOpKind::Ne == cond_op.node || BinOpKind::Gt == cond_op.node || BinOpKind::Lt == cond_op.node;
 
-            // Check if the true condition block has only one statement
-            if let ExprKind::Block(ref block, _) = then.kind;
-            if block.stmts.len() == 1 && block.expr.is_none();
-
             // Check if assign operation is done
-            if let StmtKind::Semi(ref e) = block.stmts[0].kind;
+            let e = peel_expr_or_stmt_blocks(then);
             if let Some(target) = subtracts_one(cx, e);
 
             // Extracting out the variable name

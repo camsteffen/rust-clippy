@@ -1,7 +1,7 @@
 use super::{contains_return, BIND_INSTEAD_OF_MAP};
 use clippy_utils::diagnostics::{multispan_sugg_with_applicability, span_lint_and_sugg, span_lint_and_then};
 use clippy_utils::source::{snippet, snippet_with_macro_callsite};
-use clippy_utils::{in_macro, remove_blocks, visitors::find_all_ret_expressions};
+use clippy_utils::{in_macro, peel_expr_blocks, visitors::find_all_ret_expressions};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir as hir;

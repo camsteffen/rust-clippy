@@ -2,13 +2,15 @@ use crate::{map_unit_fn::OPTION_MAP_UNIT_FN, matches::MATCH_AS_REF};
 use clippy_utils::diagnostics::span_lint_and_sugg;
 use clippy_utils::source::{snippet_with_applicability, snippet_with_context};
 use clippy_utils::ty::{can_partially_move_ty, is_type_diagnostic_item, peel_mid_ty_refs_is_mutable};
-use clippy_utils::{in_constant, is_allowed, is_else_clause, match_def_path, match_var, paths, peel_hir_expr_refs};
+use clippy_utils::{
+    in_constant, is_allowed, is_else_clause, match_def_path, match_var, paths, peel_expr_blocks, peel_hir_expr_refs,
+};
 use rustc_ast::util::parser::PREC_POSTFIX;
 use rustc_errors::Applicability;
 use rustc_hir::{
     def::Res,
     intravisit::{walk_expr, ErasedMap, NestedVisitorMap, Visitor},
-    Arm, BindingAnnotation, Block, Expr, ExprKind, MatchSource, Mutability, Pat, PatKind, Path, QPath,
+    Arm, BindingAnnotation, Expr, ExprKind, MatchSource, Mutability, Pat, PatKind, Path, QPath,
 };
 use rustc_lint::{LateContext, LateLintPass, LintContext};
 use rustc_middle::lint::in_external_macro;
@@ -295,7 +297,7 @@ fn try_parse_pattern(cx: &LateContext<'tcx>, pat: &'tcx Pat<'_>, ctxt: SyntaxCon
 // Checks for an expression wrapped by the `Some` constructor. Returns the contained expression.
 fn get_some_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>, ctxt: SyntaxContext) -> Option<&'tcx Expr<'tcx>> {
     // TODO: Allow more complex expressions.
-    match expr.kind {
+    match peel_expr_blocks(expr).kind {
         ExprKind::Call(
             Expr {
                 kind: ExprKind::Path(QPath::Resolved(None, path)),
@@ -309,33 +311,17 @@ fn get_some_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>, ctxt: SyntaxConte
                 None
             }
         },
-        ExprKind::Block(
-            Block {
-                stmts: [],
-                expr: Some(expr),
-                ..
-            },
-            _,
-        ) => get_some_expr(cx, expr, ctxt),
         _ => None,
     }
 }
 
 // Checks for the `None` value.
 fn is_none_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) -> bool {
-    match expr.kind {
+    match peel_expr_blocks(expr).kind {
         ExprKind::Path(QPath::Resolved(None, path)) => path
             .res
             .opt_def_id()
             .map_or(false, |id| match_def_path(cx, id, &paths::OPTION_NONE)),
-        ExprKind::Block(
-            Block {
-                stmts: [],
-                expr: Some(expr),
-                ..
-            },
-            _,
-        ) => is_none_expr(cx, expr),
         _ => false,
     }
 }

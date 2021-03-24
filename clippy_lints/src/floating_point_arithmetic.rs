@@ -3,7 +3,7 @@ use crate::consts::{
     Constant::{Int, F32, F64},
 };
 use clippy_utils::diagnostics::span_lint_and_sugg;
-use clippy_utils::{eq_expr_value, get_parent_expr, numeric_literal, sugg};
+use clippy_utils::{eq_expr_value, get_parent_expr, numeric_literal, peel_expr_blocks, sugg};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir::{BinOpKind, Expr, ExprKind, PathSegment, UnOp};
@@ -557,13 +557,9 @@ fn are_negated<'a>(cx: &LateContext<'_>, expr1: &'a Expr<'a>, expr2: &'a Expr<'a
 
 fn check_custom_abs(cx: &LateContext<'_>, expr: &Expr<'_>) {
     if_chain! {
-        if let ExprKind::If(cond, body, else_body) = expr.kind;
-        if let ExprKind::Block(block, _) = body.kind;
-        if block.stmts.is_empty();
-        if let Some(if_body_expr) = block.expr;
-        if let Some(ExprKind::Block(else_block, _)) = else_body.map(|el| &el.kind);
-        if else_block.stmts.is_empty();
-        if let Some(else_body_expr) = else_block.expr;
+        if let ExprKind::If(cond, body, Some(els)) = expr.kind;
+        let if_body_expr = peel_expr_blocks(body);
+        let else_body_expr = peel_expr_blocks(els);
         if let Some((if_expr_positive, body)) = are_negated(cx, if_body_expr, else_body_expr);
         then {
             let positive_abs_sugg = (

@@ -1,12 +1,12 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
-use clippy_utils::paths;
 use clippy_utils::sugg::Sugg;
 use clippy_utils::ty::is_type_diagnostic_item;
 use clippy_utils::usage::contains_return_break_continue_macro;
 use clippy_utils::{eager_or_lazy, get_enclosing_block, in_macro, match_qpath};
+use clippy_utils::{paths, peel_expr_blocks};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
-use rustc_hir::{Arm, BindingAnnotation, Block, Expr, ExprKind, MatchSource, Mutability, PatKind, UnOp};
+use rustc_hir::{BindingAnnotation, Block, Expr, ExprKind, MatchSource, Mutability, PatKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 use rustc_span::sym;
@@ -84,28 +84,6 @@ struct OptionIfLetElseOccurence {
     wrap_braces: bool,
 }
 
-/// Extracts the body of a given arm. If the arm contains only an expression,
-/// then it returns the expression. Otherwise, it returns the entire block
-fn extract_body_from_arm<'a>(arm: &'a Arm<'a>) -> Option<&'a Expr<'a>> {
-    if let ExprKind::Block(
-        Block {
-            stmts: statements,
-            expr: Some(expr),
-            ..
-        },
-        _,
-    ) = &arm.body.kind
-    {
-        if let [] = statements {
-            Some(&expr)
-        } else {
-            Some(&arm.body)
-        }
-    } else {
-        None
-    }
-}
-
 /// If this is the else body of an if/else expression, then we need to wrap
 /// it in curly braces. Otherwise, we don't.
 fn should_wrap_in_braces(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
@@ -162,6 +140,8 @@ fn detect_option_if_let_else<'tcx>(
         if !in_macro(expr.span); // Don't lint macros, because it behaves weirdly
         if let ExprKind::Match(cond_expr, arms, MatchSource::IfLetDesugar{contains_else_clause: true}) = &expr.kind;
         if arms.len() == 2;
+        if matches!(arms[0].body.kind, ExprKind::Block(Block { expr: Some(_), .. }, _));
+        if matches!(arms[1].body.kind, ExprKind::Block(Block { expr: Some(_), .. }, _));
         if !is_result_ok(cx, cond_expr); // Don't lint on Result::ok because a different lint does it already
         if let PatKind::TupleStruct(struct_qpath, &[inner_pat], _) = &arms[0].pat.kind;
         if match_qpath(struct_qpath, &paths::OPTION_SOME);
@@ -170,8 +150,8 @@ fn detect_option_if_let_else<'tcx>(
         if !contains_return_break_continue_macro(arms[1].body);
         then {
             let capture_mut = if bind_annotation == &BindingAnnotation::Mutable { "mut " } else { "" };
-            let some_body = extract_body_from_arm(&arms[0])?;
-            let none_body = extract_body_from_arm(&arms[1])?;
+            let some_body = peel_expr_blocks(&arms[0].body);
+            let none_body = peel_expr_blocks(&arms[1].body);
             let method_sugg = if eager_or_lazy::is_eagerness_candidate(cx, none_body) { "map_or" } else { "map_or_else" };
             let capture_name = id.name.to_ident_string();
             let wrap_braces = should_wrap_in_braces(cx, expr);
