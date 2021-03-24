@@ -1,9 +1,9 @@
 use clippy_utils::diagnostics::span_lint_and_then;
 use clippy_utils::visitors::LocalUsedVisitor;
-use clippy_utils::{is_lang_ctor, path_to_local, SpanlessEq};
+use clippy_utils::{is_lang_ctor, path_to_local, peel_expr_or_stmt_blocks, SpanlessEq};
 use if_chain::if_chain;
 use rustc_hir::LangItem::OptionNone;
-use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind, StmtKind, UnOp};
+use rustc_hir::{Arm, Expr, ExprKind, Guard, HirId, Pat, PatKind, UnOp};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::TypeckResults;
 use rustc_session::{declare_lint_pass, declare_tool_lint};
@@ -62,7 +62,7 @@ impl<'tcx> LateLintPass<'tcx> for CollapsibleMatch {
 }
 
 fn check_arm<'tcx>(arm: &Arm<'tcx>, wild_outer_arm: &Arm<'tcx>, cx: &LateContext<'tcx>) {
-    let expr = strip_singleton_blocks(arm.body);
+    let expr = peel_expr_or_stmt_blocks(arm.body);
     if_chain! {
         if let ExprKind::Match(expr_in, arms_inner, _) = expr.kind;
         // the outer arm pattern and the inner match
@@ -107,20 +107,6 @@ fn check_arm<'tcx>(arm: &Arm<'tcx>, wild_outer_arm: &Arm<'tcx>, cx: &LateContext
             );
         }
     }
-}
-
-fn strip_singleton_blocks<'hir>(mut expr: &'hir Expr<'hir>) -> &'hir Expr<'hir> {
-    while let ExprKind::Block(block, _) = expr.kind {
-        match (block.stmts, block.expr) {
-            ([stmt], None) => match stmt.kind {
-                StmtKind::Expr(e) | StmtKind::Semi(e) => expr = e,
-                _ => break,
-            },
-            ([], Some(e)) => expr = e,
-            _ => break,
-        }
-    }
-    expr
 }
 
 /// A "wild-like" pattern is wild ("_") or `None`.

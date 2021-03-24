@@ -1,6 +1,6 @@
 use clippy_utils::diagnostics::span_lint_and_help;
 use clippy_utils::source::snippet_with_macro_callsite;
-use clippy_utils::{is_lang_ctor, meets_msrv, parent_node_is_if_expr};
+use clippy_utils::{is_lang_ctor, meets_msrv, parent_node_is_if_expr, peel_expr_blocks};
 use if_chain::if_chain;
 use rustc_hir::LangItem::{OptionNone, OptionSome};
 use rustc_hir::{Expr, ExprKind};
@@ -79,10 +79,7 @@ impl LateLintPass<'_> for IfThenSomeElseNone {
             if let ExprKind::Call(then_call, [then_arg]) = then_expr.kind;
             if let ExprKind::Path(ref then_call_qpath) = then_call.kind;
             if is_lang_ctor(cx, then_call_qpath, OptionSome);
-            if let ExprKind::Block(els_block, _) = els.kind;
-            if els_block.stmts.is_empty();
-            if let Some(els_expr) = els_block.expr;
-            if let ExprKind::Path(ref qpath) = els_expr.kind;
+            if let ExprKind::Path(ref qpath) = peel_expr_blocks(els).kind;
             if is_lang_ctor(cx, qpath, OptionNone);
             then {
                 let cond_snip = snippet_with_macro_callsite(cx, cond.span, "[condition]");

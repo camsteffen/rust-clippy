@@ -62,9 +62,9 @@ use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_hir::intravisit::{self, NestedVisitorMap, Visitor};
 use rustc_hir::LangItem::{ResultErr, ResultOk};
 use rustc_hir::{
-    def, Arm, BindingAnnotation, Block, Body, Constness, Expr, ExprKind, FnDecl, GenericArgs, HirId, Impl, ImplItem,
-    ImplItemKind, Item, ItemKind, LangItem, MatchSource, Node, Param, Pat, PatKind, Path, PathSegment, QPath,
-    TraitItem, TraitItemKind, TraitRef, TyKind,
+    def, Arm, BindingAnnotation, Block, BlockCheckMode, Body, Constness, Expr, ExprKind, FnDecl, GenericArgs, HirId,
+    Impl, ImplItem, ImplItemKind, Item, ItemKind, LangItem, MatchSource, Node, Param, Pat, PatKind, Path, PathSegment,
+    QPath, Stmt, StmtKind, TraitItem, TraitItemKind, TraitRef, TyKind,
 };
 use rustc_lint::{LateContext, Level, Lint, LintContext};
 use rustc_middle::hir::exports::Export;
@@ -1206,14 +1206,48 @@ pub fn parent_node_is_if_expr(expr: &Expr<'_>, cx: &LateContext<'_>) -> bool {
 
 /// Remove blocks around an expression.
 ///
-/// Ie. `x`, `{ x }` and `{{{{ x }}}}` all give `x`. `{ x; y }` and `{}` return
-/// themselves.
-pub fn peel_expr_blocks<'tcx>(mut expr: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
-    while let ExprKind::Block(ref block, ..) = expr.kind {
-        match (block.stmts.is_empty(), block.expr.as_ref()) {
-            (true, Some(e)) => expr = e,
-            _ => break,
+/// Example: `x`, `{ x }` and `{{{{ x }}}}` all give `x`. `{ x; y }` and `{}` return themselves.
+pub fn peel_expr_blocks<'a>(mut expr: &'a Expr<'a>) -> &'a Expr<'a> {
+    while let ExprKind::Block(
+        Block {
+            stmts: [],
+            expr: Some(inner),
+            rules: BlockCheckMode::DefaultBlock,
+            ..
+        },
+        _,
+    ) = expr.kind
+    {
+        expr = inner;
+    }
+    expr
+}
+
+/// Remove blocks around an expression or single statement.
+///
+/// Example: `x`, `{ x }`, `{{ x }}` or `{{ x; }}` all yield `x` but `{ x; y }` yields itself.
+pub fn peel_expr_or_stmt_blocks<'a>(mut expr: &'a Expr<'a>) -> &'a Expr<'a> {
+    while let ExprKind::Block(
+        Block {
+            stmts: [],
+            expr: Some(inner),
+            rules: BlockCheckMode::DefaultBlock,
+            ..
         }
+        | Block {
+            stmts:
+                [Stmt {
+                    kind: StmtKind::Expr(inner) | StmtKind::Semi(inner),
+                    ..
+                }],
+            expr: None,
+            rules: BlockCheckMode::DefaultBlock,
+            ..
+        },
+        _,
+    ) = expr.kind
+    {
+        expr = inner;
     }
     expr
 }

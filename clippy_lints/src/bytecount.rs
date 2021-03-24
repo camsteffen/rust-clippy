@@ -1,7 +1,7 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
 use clippy_utils::source::snippet_with_applicability;
 use clippy_utils::ty::match_type;
-use clippy_utils::{contains_name, get_pat_name, paths, single_segment_path};
+use clippy_utils::{contains_name, get_pat_name, paths, peel_expr_blocks, single_segment_path};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir::{BinOpKind, BorrowKind, Expr, ExprKind, UnOp};
@@ -97,16 +97,9 @@ fn check_arg(name: Symbol, arg: Symbol, needle: &Expr<'_>) -> bool {
 }
 
 fn get_path_name(expr: &Expr<'_>) -> Option<Symbol> {
-    match expr.kind {
+    match peel_expr_blocks(expr).kind {
         ExprKind::Box(e) | ExprKind::AddrOf(BorrowKind::Ref, _, e) | ExprKind::Unary(UnOp::Deref, e) => {
             get_path_name(e)
-        },
-        ExprKind::Block(b, _) => {
-            if b.stmts.is_empty() {
-                b.expr.as_ref().and_then(|p| get_path_name(p))
-            } else {
-                None
-            }
         },
         ExprKind::Path(ref qpath) => single_segment_path(qpath).map(|ps| ps.ident.name),
         _ => None,

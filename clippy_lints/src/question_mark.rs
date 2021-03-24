@@ -1,13 +1,13 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
-use clippy_utils::is_lang_ctor;
 use clippy_utils::source::snippet_with_applicability;
 use clippy_utils::sugg::Sugg;
 use clippy_utils::ty::is_type_diagnostic_item;
 use clippy_utils::{eq_expr_value, match_qpath};
+use clippy_utils::{is_lang_ctor, peel_expr_blocks, peel_expr_or_stmt_blocks};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir::LangItem::OptionNone;
-use rustc_hir::{BindingAnnotation, Block, Expr, ExprKind, MatchSource, PatKind, StmtKind};
+use rustc_hir::{BindingAnnotation, Expr, ExprKind, MatchSource, PatKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 use rustc_span::sym;
@@ -62,14 +62,8 @@ impl QuestionMark {
                 let receiver_str = &Sugg::hir_with_applicability(cx, subject, "..", &mut applicability);
                 let mut replacement: Option<String> = None;
                 if let Some(else_) = else_ {
-                    if_chain! {
-                        if let ExprKind::Block(block, None) = &else_.kind;
-                        if block.stmts.is_empty();
-                        if let Some(block_expr) = &block.expr;
-                        if eq_expr_value(cx, subject, block_expr);
-                        then {
-                            replacement = Some(format!("Some({}?)", receiver_str));
-                        }
+                    if eq_expr_value(cx, subject, peel_expr_blocks(else_)) {
+                        replacement = Some(format!("Some({}?)", receiver_str));
                     }
                 } else if Self::moves_by_default(cx, subject)
                     && !matches!(subject.kind, ExprKind::Call(..) | ExprKind::MethodCall(..))
@@ -148,43 +142,11 @@ impl QuestionMark {
     }
 
     fn expression_returns_none(cx: &LateContext<'_>, expression: &Expr<'_>) -> bool {
-        match expression.kind {
-            ExprKind::Block(block, _) => {
-                if let Some(return_expression) = Self::return_expression(block) {
-                    return Self::expression_returns_none(cx, return_expression);
-                }
-
-                false
-            },
+        match peel_expr_or_stmt_blocks(expression).kind {
             ExprKind::Ret(Some(expr)) => Self::expression_returns_none(cx, expr),
             ExprKind::Path(ref qpath) => is_lang_ctor(cx, qpath, OptionNone),
             _ => false,
         }
-    }
-
-    fn return_expression<'tcx>(block: &Block<'tcx>) -> Option<&'tcx Expr<'tcx>> {
-        // Check if last expression is a return statement. Then, return the expression
-        if_chain! {
-            if block.stmts.len() == 1;
-            if let Some(expr) = block.stmts.iter().last();
-            if let StmtKind::Semi(expr) = expr.kind;
-            if let ExprKind::Ret(Some(ret_expr)) = expr.kind;
-
-            then {
-                return Some(ret_expr);
-            }
-        }
-
-        // Check for `return` without a semicolon.
-        if_chain! {
-            if block.stmts.is_empty();
-            if let Some(ExprKind::Ret(Some(ret_expr))) = block.expr.as_ref().map(|e| &e.kind);
-            then {
-                return Some(ret_expr);
-            }
-        }
-
-        None
     }
 }
 
