@@ -986,20 +986,6 @@ pub fn is_automatically_derived(attrs: &[ast::Attribute]) -> bool {
     attrs.iter().any(|attr| attr.has_name(sym::automatically_derived))
 }
 
-/// Remove blocks around an expression.
-///
-/// Ie. `x`, `{ x }` and `{{{{ x }}}}` all give `x`. `{ x; y }` and `{}` return
-/// themselves.
-pub fn remove_blocks<'tcx>(mut expr: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
-    while let ExprKind::Block(ref block, ..) = expr.kind {
-        match (block.stmts.is_empty(), block.expr.as_ref()) {
-            (true, Some(e)) => expr = e,
-            _ => break,
-        }
-    }
-    expr
-}
-
 pub fn is_self(slf: &Param<'_>) -> bool {
     if let PatKind::Binding(.., name, _) = slf.pat.kind {
         name.name == kw::SelfLower
@@ -1216,6 +1202,20 @@ pub fn parent_node_is_if_expr(expr: &Expr<'_>, cx: &LateContext<'_>) -> bool {
             ..
         })
     )
+}
+
+/// Remove blocks around an expression.
+///
+/// Ie. `x`, `{ x }` and `{{{{ x }}}}` all give `x`. `{ x; y }` and `{}` return
+/// themselves.
+pub fn peel_expr_blocks<'tcx>(mut expr: &'tcx Expr<'tcx>) -> &'tcx Expr<'tcx> {
+    while let ExprKind::Block(ref block, ..) = expr.kind {
+        match (block.stmts.is_empty(), block.expr.as_ref()) {
+            (true, Some(e)) => expr = e,
+            _ => break,
+        }
+    }
+    expr
 }
 
 // Finds the `#[must_use]` attribute, if any

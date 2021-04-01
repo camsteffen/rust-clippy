@@ -1,6 +1,6 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
 use clippy_utils::ty::is_type_diagnostic_item;
-use clippy_utils::{is_adjusted, is_trait_method, match_path, match_var, paths, remove_blocks};
+use clippy_utils::{is_adjusted, is_trait_method, match_path, match_var, paths, peel_expr_blocks};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
 use rustc_hir::{Body, Expr, ExprKind, Pat, PatKind, QPath, StmtKind};
@@ -90,7 +90,7 @@ fn is_expr_identity_function(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
 /// return x; }`
 fn is_body_identity_function(cx: &LateContext<'_>, func: &Body<'_>) -> bool {
     let params = func.params;
-    let body = remove_blocks(&func.value);
+    let body = peel_expr_blocks(&func.value);
 
     // if there's less/more than one parameter, then it is not the identity function
     if params.len() != 1 {
