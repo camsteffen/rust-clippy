@@ -3,10 +3,11 @@ use clippy_utils::diagnostics::span_lint_and_sugg;
 use clippy_utils::source::{snippet_with_applicability, snippet_with_context};
 use clippy_utils::ty::{can_partially_move_ty, is_type_diagnostic_item, peel_mid_ty_refs_is_mutable};
 use clippy_utils::{
-    in_constant, is_allowed, is_else_clause, match_def_path, match_var, paths, peel_expr_blocks, peel_hir_expr_refs,
+    in_constant, is_allowed, is_else_clause, is_lang_ctor, match_var, peel_expr_blocks, peel_hir_expr_refs,
 };
 use rustc_ast::util::parser::PREC_POSTFIX;
 use rustc_errors::Applicability;
+use rustc_hir::LangItem::{OptionNone, OptionSome};
 use rustc_hir::{
     def::Res,
     intravisit::{walk_expr, ErasedMap, NestedVisitorMap, Visitor},
@@ -271,20 +272,9 @@ fn try_parse_pattern(cx: &LateContext<'tcx>, pat: &'tcx Pat<'_>, ctxt: SyntaxCon
         match pat.kind {
             PatKind::Wild => Some(OptionPat::Wild),
             PatKind::Ref(pat, _) => f(cx, pat, ref_count + 1, ctxt),
-            PatKind::Path(QPath::Resolved(None, path))
-                if path
-                    .res
-                    .opt_def_id()
-                    .map_or(false, |id| match_def_path(cx, id, &paths::OPTION_NONE)) =>
-            {
-                Some(OptionPat::None)
-            },
-            PatKind::TupleStruct(QPath::Resolved(None, path), [pattern], _)
-                if path
-                    .res
-                    .opt_def_id()
-                    .map_or(false, |id| match_def_path(cx, id, &paths::OPTION_SOME))
-                    && pat.span.ctxt() == ctxt =>
+            PatKind::Path(ref qpath) if is_lang_ctor(cx, qpath, OptionNone) => Some(OptionPat::None),
+            PatKind::TupleStruct(ref qpath, [pattern], _)
+                if is_lang_ctor(cx, qpath, OptionSome) && pat.span.ctxt() == ctxt =>
             {
                 Some(OptionPat::Some { pattern, ref_count })
             },
@@ -300,12 +290,12 @@ fn get_some_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>, ctxt: SyntaxConte
     match peel_expr_blocks(expr).kind {
         ExprKind::Call(
             Expr {
-                kind: ExprKind::Path(QPath::Resolved(None, path)),
+                kind: ExprKind::Path(ref qpath),
                 ..
             },
             [arg],
         ) if ctxt == expr.span.ctxt() => {
-            if match_def_path(cx, path.res.opt_def_id()?, &paths::OPTION_SOME) {
+            if is_lang_ctor(cx, qpath, OptionSome) {
                 Some(arg)
             } else {
                 None
@@ -318,10 +308,7 @@ fn get_some_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>, ctxt: SyntaxConte
 // Checks for the `None` value.
 fn is_none_expr(cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) -> bool {
     match peel_expr_blocks(expr).kind {
-        ExprKind::Path(QPath::Resolved(None, path)) => path
-            .res
-            .opt_def_id()
-            .map_or(false, |id| match_def_path(cx, id, &paths::OPTION_NONE)),
+        ExprKind::Path(ref qpath) => is_lang_ctor(cx, qpath, OptionNone),
         _ => false,
     }
 }

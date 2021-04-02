@@ -1,12 +1,13 @@
 use clippy_utils::diagnostics::span_lint_and_sugg;
+use clippy_utils::is_lang_ctor;
 use clippy_utils::source::snippet_with_applicability;
 use clippy_utils::sugg::Sugg;
 use clippy_utils::ty::is_type_diagnostic_item;
-use clippy_utils::{eq_expr_value, match_def_path, match_qpath, paths, peel_expr_blocks, peel_expr_or_stmt_blocks};
+use clippy_utils::{eq_expr_value, match_qpath, peel_expr_blocks, peel_expr_or_stmt_blocks};
 use if_chain::if_chain;
 use rustc_errors::Applicability;
-use rustc_hir::def::{DefKind, Res};
-use rustc_hir::{def, BindingAnnotation, Expr, ExprKind, MatchSource, PatKind};
+use rustc_hir::LangItem::OptionNone;
+use rustc_hir::{BindingAnnotation, Expr, ExprKind, MatchSource, PatKind};
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_session::{declare_lint_pass, declare_tool_lint};
 use rustc_span::sym;
@@ -140,20 +141,13 @@ impl QuestionMark {
         is_type_diagnostic_item(cx, expr_ty, sym::option_type)
     }
 
-    fn expression_returns_none(cx: &LateContext<'_>, expression: &Expr<'_>) -> bool {
-        match peel_expr_or_stmt_blocks(expression).kind {
-            ExprKind::Ret(Some(ref expr)) => Self::expression_returns_none(cx, expr),
-            ExprKind::Path(ref qp) => {
-                if let Res::Def(DefKind::Ctor(def::CtorOf::Variant, def::CtorKind::Const), def_id) =
-                    cx.qpath_res(qp, expression.hir_id)
-                {
-                    return match_def_path(cx, def_id, &paths::OPTION_NONE);
-                }
-
-                false
-            },
-            _ => false,
+    fn expression_returns_none(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
+        if let ExprKind::Ret(Some(ret)) = peel_expr_or_stmt_blocks(expr).kind {
+            if let ExprKind::Path(ref qpath) = ret.kind {
+                return is_lang_ctor(cx, qpath, OptionNone);
+            }
         }
+        false
     }
 }
 

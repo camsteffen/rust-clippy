@@ -41,7 +41,7 @@ impl<'tcx> LateLintPass<'tcx> for UnusedIoAmount {
         };
 
         match expr.kind {
-            hir::ExprKind::Match(ref res, _, _) if is_try(expr).is_some() => {
+            hir::ExprKind::Match(ref res, _, _) if is_try(cx, expr).is_some() => {
                 if let hir::ExprKind::Call(ref func, ref args) = res.kind {
                     if matches!(
                         func.kind,
