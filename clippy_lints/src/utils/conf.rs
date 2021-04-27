@@ -58,7 +58,7 @@ impl From<io::Error> for Error {
 static ERRORS: SyncLazy<Mutex<Vec<Error>>> = SyncLazy::new(|| Mutex::new(Vec::new()));
 
 macro_rules! define_Conf {
-    ($(#[$doc:meta] ($config:ident, $config_str:literal: $Ty:ty, $default:expr),)+) => {
+    ($(#[$doc:meta] ($config:ident: $Ty:ty, $default:expr),)+) => {
         mod helpers {
             use serde::Deserialize;
             /// Type used to store lint configuration.
@@ -67,8 +67,8 @@ macro_rules! define_Conf {
             pub struct Conf {
                 $(
                     #[$doc]
-                    #[serde(default = $config_str)]
-                    #[serde(with = $config_str)]
+                    #[serde(default = stringify!($config))]
+                    #[serde(with = stringify!($config))]
                     pub $config: $Ty,
                 )+
                 #[allow(dead_code)]
@@ -107,15 +107,15 @@ macro_rules! define_Conf {
 pub use self::helpers::Conf;
 define_Conf! {
     /// Lint: CLONED_INSTEAD_OF_COPIED, REDUNDANT_FIELD_NAMES, REDUNDANT_STATIC_LIFETIMES, FILTER_MAP_NEXT, CHECKED_CONVERSIONS, MANUAL_RANGE_CONTAINS, USE_SELF, MEM_REPLACE_WITH_DEFAULT, MANUAL_NON_EXHAUSTIVE, OPTION_AS_REF_DEREF, MAP_UNWRAP_OR, MATCH_LIKE_MATCHES_MACRO, MANUAL_STRIP, MISSING_CONST_FOR_FN, UNNESTED_OR_PATTERNS, FROM_OVER_INTO, PTR_AS_PTR. The minimum rust version that the project supports
-    (msrv, "msrv": Option<String>, None),
+    (msrv: Option<String>, None),
     /// Lint: BLACKLISTED_NAME. The list of blacklisted names to lint about. NB: `bar` is not here since it has legitimate uses
-    (blacklisted_names, "blacklisted_names": Vec<String>, ["foo", "baz", "quux"].iter().map(ToString::to_string).collect()),
+    (blacklisted_names: Vec<String>, ["foo", "baz", "quux"].iter().map(ToString::to_string).collect()),
     /// Lint: COGNITIVE_COMPLEXITY. The maximum cognitive complexity a function can have
-    (cognitive_complexity_threshold, "cognitive_complexity_threshold": u64, 25),
+    (cognitive_complexity_threshold: u64, 25),
     /// DEPRECATED LINT: CYCLOMATIC_COMPLEXITY. Use the Cognitive Complexity lint instead.
-    (cyclomatic_complexity_threshold, "cyclomatic_complexity_threshold": Option<u64>, None),
+    (cyclomatic_complexity_threshold: Option<u64>, None),
     /// Lint: DOC_MARKDOWN. The list of words this lint should not consider as identifiers needing ticks
-    (doc_valid_idents, "doc_valid_idents": Vec<String>, [
+    (doc_valid_idents: Vec<String>, [
         "KiB", "MiB", "GiB", "TiB", "PiB", "EiB",
         "DirectX",
         "ECMAScript",
@@ -136,47 +136,47 @@ define_Conf! {
         "CamelCase",
     ].iter().map(ToString::to_string).collect()),
     /// Lint: TOO_MANY_ARGUMENTS. The maximum number of argument a function or method can have
-    (too_many_arguments_threshold, "too_many_arguments_threshold": u64, 7),
+    (too_many_arguments_threshold: u64, 7),
     /// Lint: TYPE_COMPLEXITY. The maximum complexity a type can have
-    (type_complexity_threshold, "type_complexity_threshold": u64, 250),
+    (type_complexity_threshold: u64, 250),
     /// Lint: MANY_SINGLE_CHAR_NAMES. The maximum number of single char bindings a scope may have
-    (single_char_binding_names_threshold, "single_char_binding_names_threshold": u64, 4),
+    (single_char_binding_names_threshold: u64, 4),
     /// Lint: BOXED_LOCAL, USELESS_VEC. The maximum size of objects (in bytes) that will be linted. Larger objects are ok on the heap
-    (too_large_for_stack, "too_large_for_stack": u64, 200),
+    (too_large_for_stack: u64, 200),
     /// Lint: ENUM_VARIANT_NAMES. The minimum number of enum variants for the lints about variant names to trigger
-    (enum_variant_name_threshold, "enum_variant_name_threshold": u64, 3),
+    (enum_variant_name_threshold: u64, 3),
     /// Lint: LARGE_ENUM_VARIANT. The maximum size of a enum's variant to avoid box suggestion
-    (enum_variant_size_threshold, "enum_variant_size_threshold": u64, 200),
+    (enum_variant_size_threshold: u64, 200),
     /// Lint: VERBOSE_BIT_MASK. The maximum allowed size of a bit mask before suggesting to use 'trailing_zeros'
-    (verbose_bit_mask_threshold, "verbose_bit_mask_threshold": u64, 1),
+    (verbose_bit_mask_threshold: u64, 1),
     /// Lint: DECIMAL_LITERAL_REPRESENTATION. The lower bound for linting decimal literals
-    (literal_representation_threshold, "literal_representation_threshold": u64, 16384),
+    (literal_representation_threshold: u64, 16384),
     /// Lint: TRIVIALLY_COPY_PASS_BY_REF. The maximum size (in bytes) to consider a `Copy` type for passing by value instead of by reference.
-    (trivial_copy_size_limit, "trivial_copy_size_limit": Option<u64>, None),
+    (trivial_copy_size_limit: Option<u64>, None),
     /// Lint: LARGE_TYPE_PASS_BY_MOVE. The minimum size (in bytes) to consider a type for passing by reference instead of by value.
-    (pass_by_value_size_limit, "pass_by_value_size_limit": u64, 256),
+    (pass_by_value_size_limit: u64, 256),
     /// Lint: TOO_MANY_LINES. The maximum number of lines a function or method can have
-    (too_many_lines_threshold, "too_many_lines_threshold": u64, 100),
+    (too_many_lines_threshold: u64, 100),
     /// Lint: LARGE_STACK_ARRAYS, LARGE_CONST_ARRAYS. The maximum allowed size for arrays on the stack
-    (array_size_threshold, "array_size_threshold": u64, 512_000),
+    (array_size_threshold: u64, 512_000),
     /// Lint: VEC_BOX. The size of the boxed type in bytes, where boxing in a `Vec` is allowed
-    (vec_box_size_threshold, "vec_box_size_threshold": u64, 4096),
+    (vec_box_size_threshold: u64, 4096),
     /// Lint: TYPE_REPETITION_IN_BOUNDS. The maximum number of bounds a trait can have to be linted
-    (max_trait_bounds, "max_trait_bounds": u64, 3),
+    (max_trait_bounds: u64, 3),
     /// Lint: STRUCT_EXCESSIVE_BOOLS. The maximum number of bools a struct can have
-    (max_struct_bools, "max_struct_bools": u64, 3),
+    (max_struct_bools: u64, 3),
     /// Lint: FN_PARAMS_EXCESSIVE_BOOLS. The maximum number of bools function parameters can have
-    (max_fn_params_bools, "max_fn_params_bools": u64, 3),
+    (max_fn_params_bools: u64, 3),
     /// Lint: WILDCARD_IMPORTS. Whether to allow certain wildcard imports (prelude, super in tests).
-    (warn_on_all_wildcard_imports, "warn_on_all_wildcard_imports": bool, false),
+    (warn_on_all_wildcard_imports: bool, false),
     /// Lint: DISALLOWED_METHOD. The list of disallowed methods, written as fully qualified paths.
-    (disallowed_methods, "disallowed_methods": Vec<String>, Vec::<String>::new()),
+    (disallowed_methods: Vec<String>, Vec::<String>::new()),
     /// Lint: UNREADABLE_LITERAL. Should the fraction of a decimal be linted to include separators.
-    (unreadable_literal_lint_fractions, "unreadable_literal_lint_fractions": bool, true),
+    (unreadable_literal_lint_fractions: bool, true),
     /// Lint: UPPER_CASE_ACRONYMS. Enables verbose mode. Triggers if there is more than one uppercase char next to each other
-    (upper_case_acronyms_aggressive, "upper_case_acronyms_aggressive": bool, false),
+    (upper_case_acronyms_aggressive: bool, false),
     /// Lint: _CARGO_COMMON_METADATA. For internal testing only, ignores the current `publish` settings in the Cargo manifest.
-    (cargo_ignore_publish, "cargo_ignore_publish": bool, false),
+    (cargo_ignore_publish: bool, false),
 }
 
 impl Default for Conf {
