@@ -7,11 +7,11 @@ use clippy_utils::sugg::Sugg;
 use clippy_utils::ty::{implements_trait, is_type_diagnostic_item, match_type, peel_mid_ty_refs};
 use clippy_utils::visitors::LocalUsedVisitor;
 use clippy_utils::{
-    get_parent_expr, in_macro, is_allowed, is_expn_of, is_lang_ctor, is_refutable, is_wild, meets_msrv, msrvs,
-    path_to_local, path_to_local_id, peel_hir_pat_refs, peel_n_hir_expr_refs, recurse_or_patterns, remove_blocks,
-    strip_pat_refs,
+    get_parent_expr, hash_spanless_fx, in_macro, is_allowed, is_expn_of, is_lang_ctor, is_refutable, is_wild,
+    meets_msrv, msrvs, path_to_local, path_to_local_id, peel_hir_pat_refs, peel_n_hir_expr_refs, recurse_or_patterns,
+    remove_blocks, strip_pat_refs,
 };
-use clippy_utils::{paths, search_same, SpanlessEq, SpanlessHash};
+use clippy_utils::{paths, search_same, SpanlessEq};
 use if_chain::if_chain;
 use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
@@ -2190,11 +2190,7 @@ fn test_overlapping() {
 /// Implementation of `MATCH_SAME_ARMS`.
 fn lint_match_arms<'tcx>(cx: &LateContext<'tcx>, expr: &Expr<'_>) {
     if let ExprKind::Match(_, arms, MatchSource::Normal) = expr.kind {
-        let hash = |&(_, arm): &(usize, &Arm<'_>)| -> u64 {
-            let mut h = SpanlessHash::new(cx);
-            h.hash_expr(arm.body);
-            h.finish()
-        };
+        let hash = |&(_, arm): &(usize, &Arm<'_>)| -> u64 { hash_spanless_fx(cx, arm.body) };
 
         let eq = |&(lindex, lhs): &(usize, &Arm<'_>), &(rindex, rhs): &(usize, &Arm<'_>)| -> bool {
             let min_index = usize::min(lindex, rindex);

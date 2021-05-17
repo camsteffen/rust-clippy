@@ -2,18 +2,19 @@ use crate::consts::{constant_context, constant_simple};
 use crate::differing_macro_contexts;
 use crate::source::snippet_opt;
 use rustc_ast::ast::InlineAsmTemplatePiece;
+use rustc_ast::Label;
 use rustc_data_structures::fx::FxHasher;
 use rustc_hir::def::Res;
 use rustc_hir::HirIdMap;
 use rustc_hir::{
-    BinOpKind, Block, BodyId, Expr, ExprField, ExprKind, FnRetTy, GenericArg, GenericArgs, Guard, HirId,
-    InlineAsmOperand, Lifetime, LifetimeName, ParamName, Pat, PatField, PatKind, Path, PathSegment, QPath, Stmt,
-    StmtKind, Ty, TyKind, TypeBinding,
+    Arm, BareFnTy, BinOpKind, Block, BodyId, Destination, Expr, ExprField, ExprKind, FnRetTy, GenericArg, GenericArgs,
+    Guard, HirId, InlineAsm, InlineAsmOperand, Lifetime, LifetimeName, MutTy, ParamName, Pat, PatField, PatKind, Path,
+    PathSegment, QPath, Stmt, StmtKind, Ty, TyKind, TypeBinding,
 };
 use rustc_lexer::{tokenize, TokenKind};
 use rustc_lint::LateContext;
 use rustc_middle::ty::TypeckResults;
-use rustc_span::Symbol;
+use rustc_span::symbol::Ident;
 use std::hash::{Hash, Hasher};
 
 /// Type used to check whether two ast are the same. This is different from the
@@ -509,454 +510,331 @@ pub fn eq_expr_value(cx: &LateContext<'_>, left: &Expr<'_>, right: &Expr<'_>) ->
     SpanlessEq::new(cx).deny_side_effects().eq_expr(left, right)
 }
 
+pub fn hash_spanless_fx(cx: &LateContext<'_>, item: &impl SpanlessHash) -> u64 {
+    let mut fx = FxHasher::default();
+    item.hash_spanless(&mut SpanlessHasher::new(cx), &mut fx);
+    fx.finish()
+}
+
 /// Type used to hash an ast element. This is different from the `Hash` trait
 /// on ast types as this
 /// trait would consider IDs and spans.
 ///
 /// All expressions kind are hashed, but some might have a weaker hash.
-pub struct SpanlessHash<'a, 'tcx> {
-    /// Context used to evaluate constant expressions.
+pub struct SpanlessHasher<'a, 'tcx> {
     cx: &'a LateContext<'tcx>,
-    maybe_typeck_results: Option<&'tcx TypeckResults<'tcx>>,
-    s: FxHasher,
+    maybe_typeck_results: Option<&'a TypeckResults<'tcx>>,
 }
 
-impl<'a, 'tcx> SpanlessHash<'a, 'tcx> {
+impl<'a, 'tcx> SpanlessHasher<'a, 'tcx> {
     pub fn new(cx: &'a LateContext<'tcx>) -> Self {
         Self {
             cx,
             maybe_typeck_results: cx.maybe_typeck_results(),
-            s: FxHasher::default(),
         }
     }
+}
 
-    pub fn finish(self) -> u64 {
-        self.s.finish()
-    }
+pub trait SpanlessHash {
+    fn hash_spanless<H: Hasher>(&self, sh: &mut SpanlessHasher<'_, '_>, state: &mut H);
+}
 
-    pub fn hash_block(&mut self, b: &Block<'_>) {
-        for s in b.stmts {
-            self.hash_stmt(s);
+macro_rules! spanless_hash_impls {
+    (
+        fn hash_spanless(&$slf:ident, $spanless:ident, $state:ident);
+        $($ty:ty => $body:expr $(,)?)*
+    ) => {
+        $(
+        impl SpanlessHash for $ty {
+            fn hash_spanless<H: Hasher>(
+                &$slf,
+                #[allow(unused_variables)] $spanless: &mut SpanlessHasher<'_, '_>,
+                $state: &mut H
+            ) {
+                $body
+            }
         }
+        )*
+    };
+}
 
-        if let Some(ref e) = b.expr {
-            self.hash_expr(e);
+spanless_hash_impls! {
+    fn hash_spanless(&self, sh, state);
+
+    Arm<'_> => (self.pat, &self.guard, self.body).hash_spanless(sh, state),
+    BareFnTy<'_> => {
+        (self.unsafety, self.abi).hash(state);
+        self.decl.inputs.hash_spanless(sh, state);
+        std::mem::discriminant(&self.decl.output).hash(state);
+        match self.decl.output {
+            FnRetTy::DefaultReturn(_) => {},
+            FnRetTy::Return(ref ty) => ty.hash_spanless(sh, state),
         }
-
-        std::mem::discriminant(&b.rules).hash(&mut self.s);
+        self.decl.c_variadic.hash(state);
     }
-
-    #[allow(clippy::many_single_char_names, clippy::too_many_lines)]
-    pub fn hash_expr(&mut self, e: &Expr<'_>) {
-        let simple_const = self
+    Block<'_> => {
+        (self.stmts, self.expr).hash_spanless(sh, state);
+        std::mem::discriminant(&self.rules).hash(state);
+    }
+    BodyId => {
+        // swap out TypeckResults when hashing a body
+        let old_maybe_typeck_results = sh
             .maybe_typeck_results
-            .and_then(|typeck_results| constant_simple(self.cx, typeck_results, e));
+            .replace(sh.cx.tcx.typeck_body(*self));
+        sh.cx.tcx.hir().body(*self).value.hash_spanless(sh, state);
+        sh.maybe_typeck_results = old_maybe_typeck_results;
+    }
+    Destination => self.label.hash_spanless(sh, state),
+    Expr<'_> => {
+        let simple_const = sh
+            .maybe_typeck_results
+            .and_then(|typeck_results| constant_simple(sh.cx, typeck_results, self));
 
         // const hashing may result in the same hash as some unrelated node, so add a sort of
         // discriminant depending on which path we're choosing next
-        simple_const.hash(&mut self.s);
+        simple_const.hash(state);
         if simple_const.is_some() {
             return;
         }
 
-        std::mem::discriminant(&e.kind).hash(&mut self.s);
+        std::mem::discriminant(&self.kind).hash(state);
 
-        match e.kind {
+        match self.kind {
             ExprKind::AddrOf(kind, m, ref e) => {
-                std::mem::discriminant(&kind).hash(&mut self.s);
-                m.hash(&mut self.s);
-                self.hash_expr(e);
+                std::mem::discriminant(&kind).hash(state);
+                m.hash(state);
+                e.hash_spanless(sh, state);
             },
-            ExprKind::Continue(i) => {
-                if let Some(i) = i.label {
-                    self.hash_name(i.ident.name);
-                }
-            },
-            ExprKind::Assign(ref l, ref r, _) => {
-                self.hash_expr(l);
-                self.hash_expr(r);
-            },
+            ExprKind::Continue(d) => d.hash_spanless(sh, state),
+            ExprKind::Assign(ref l, ref r, _) => (l, r).hash_spanless(sh, state),
             ExprKind::AssignOp(ref o, ref l, ref r) => {
-                std::mem::discriminant(&o.node).hash(&mut self.s);
-                self.hash_expr(l);
-                self.hash_expr(r);
+                std::mem::discriminant(&o.node).hash(state);
+                (l, r).hash_spanless(sh, state);
             },
-            ExprKind::Block(ref b, _) => {
-                self.hash_block(b);
-            },
+            ExprKind::Block(ref b, _) => b.hash_spanless(sh, state),
             ExprKind::Binary(op, ref l, ref r) => {
-                std::mem::discriminant(&op.node).hash(&mut self.s);
-                self.hash_expr(l);
-                self.hash_expr(r);
+                std::mem::discriminant(&op.node).hash(state);
+                (l, r).hash_spanless(sh, state);
             },
-            ExprKind::Break(i, ref j) => {
-                if let Some(i) = i.label {
-                    self.hash_name(i.ident.name);
-                }
-                if let Some(ref j) = *j {
-                    self.hash_expr(&*j);
-                }
-            },
-            ExprKind::Box(ref e) | ExprKind::DropTemps(ref e) | ExprKind::Yield(ref e, _) => {
-                self.hash_expr(e);
-            },
-            ExprKind::Call(ref fun, args) => {
-                self.hash_expr(fun);
-                self.hash_exprs(args);
-            },
-            ExprKind::Cast(ref e, ref ty) | ExprKind::Type(ref e, ref ty) => {
-                self.hash_expr(e);
-                self.hash_ty(ty);
-            },
+            ExprKind::Break(d, j) => (d, j).hash_spanless(sh, state),
+            ExprKind::Box(ref e)
+            | ExprKind::DropTemps(ref e)
+            | ExprKind::Yield(ref e, _) => e.hash_spanless(sh, state),
+            ExprKind::Call(ref fun, args) => (fun, args).hash_spanless(sh, state),
+            ExprKind::Cast(ref e, ty)
+            | ExprKind::Type(ref e, ty) => (e, ty).hash_spanless(sh, state),
             ExprKind::Closure(cap, _, eid, _, _) => {
-                std::mem::discriminant(&cap).hash(&self.s);
+                std::mem::discriminant(&cap).hash(state);
                 // closures inherit TypeckResults
-                self.hash_expr(&self.cx.tcx.hir().body(eid).value);
+                sh.cx.tcx.hir().body(eid).value.hash_spanless(sh, state);
             },
-            ExprKind::Field(ref e, ref f) => {
-                self.hash_expr(e);
-                self.hash_name(f.name);
-            },
-            ExprKind::Index(ref a, ref i) => {
-                self.hash_expr(a);
-                self.hash_expr(i);
-            },
-            ExprKind::InlineAsm(ref asm) => {
-                for piece in asm.template {
-                    match piece {
-                        InlineAsmTemplatePiece::String(s) => s.hash(&mut self.s),
-                        InlineAsmTemplatePiece::Placeholder {
-                            operand_idx,
-                            modifier,
-                            span: _,
-                        } => {
-                            operand_idx.hash(&mut self.s);
-                            modifier.hash(&mut self.s);
-                        },
-                    }
-                }
-                asm.options.hash(&mut self.s);
-                for (op, _op_sp) in asm.operands {
-                    match op {
-                        InlineAsmOperand::In { reg, expr } => {
-                            reg.hash(&mut self.s);
-                            self.hash_expr(expr);
-                        },
-                        InlineAsmOperand::Out { reg, late, expr } => {
-                            reg.hash(&mut self.s);
-                            late.hash(&mut self.s);
-                            if let Some(expr) = expr {
-                                self.hash_expr(expr);
-                            }
-                        },
-                        InlineAsmOperand::InOut { reg, late, expr } => {
-                            reg.hash(&mut self.s);
-                            late.hash(&mut self.s);
-                            self.hash_expr(expr);
-                        },
-                        InlineAsmOperand::SplitInOut {
-                            reg,
-                            late,
-                            in_expr,
-                            out_expr,
-                        } => {
-                            reg.hash(&mut self.s);
-                            late.hash(&mut self.s);
-                            self.hash_expr(in_expr);
-                            if let Some(out_expr) = out_expr {
-                                self.hash_expr(out_expr);
-                            }
-                        },
-                        InlineAsmOperand::Const { anon_const } => self.hash_body(anon_const.body),
-                        InlineAsmOperand::Sym { expr } => self.hash_expr(expr),
-                    }
-                }
-            },
+            ExprKind::Field(ref e, ref f) => (e, f).hash_spanless(sh, state),
+            ExprKind::Index(ref a, ref i) => (a, i).hash_spanless(sh, state),
+            ExprKind::InlineAsm(ref asm) => asm.hash_spanless(sh, state),
             ExprKind::LlvmInlineAsm(..) | ExprKind::Err => {},
-            ExprKind::Lit(ref l) => {
-                l.node.hash(&mut self.s);
+            ExprKind::Lit(ref l) => l.node.hash(state),
+            ExprKind::Loop(b, label, ..) => (b, label).hash_spanless(sh, state),
+            ExprKind::If(cond, then, els) => (cond, then, els).hash_spanless(sh, state),
+            ExprKind::Match(e, arms, ref s) => {
+                (e, arms).hash_spanless(sh, state);
+                s.hash(state);
             },
-            ExprKind::Loop(ref b, ref i, ..) => {
-                self.hash_block(b);
-                if let Some(i) = *i {
-                    self.hash_name(i.ident.name);
-                }
-            },
-            ExprKind::If(ref cond, ref then, ref else_opt) => {
-                self.hash_expr(cond);
-                self.hash_expr(&**then);
-                if let Some(ref e) = *else_opt {
-                    self.hash_expr(e);
-                }
-            },
-            ExprKind::Match(ref e, arms, ref s) => {
-                self.hash_expr(e);
-
-                for arm in arms {
-                    self.hash_pat(arm.pat);
-                    if let Some(ref e) = arm.guard {
-                        self.hash_guard(e);
-                    }
-                    self.hash_expr(&arm.body);
-                }
-
-                s.hash(&mut self.s);
-            },
-            ExprKind::MethodCall(ref path, ref _tys, args, ref _fn_span) => {
-                self.hash_name(path.ident.name);
-                self.hash_exprs(args);
-            },
-            ExprKind::ConstBlock(ref l_id) => {
-                self.hash_body(l_id.body);
-            },
-            ExprKind::Repeat(ref e, ref l_id) => {
-                self.hash_expr(e);
-                self.hash_body(l_id.body);
-            },
-            ExprKind::Ret(ref e) => {
-                if let Some(ref e) = *e {
-                    self.hash_expr(e);
-                }
-            },
-            ExprKind::Path(ref qpath) => {
-                self.hash_qpath(qpath);
-            },
-            ExprKind::Struct(ref path, fields, ref expr) => {
-                self.hash_qpath(path);
-
-                for f in fields {
-                    self.hash_name(f.ident.name);
-                    self.hash_expr(&f.expr);
-                }
-
-                if let Some(ref e) = *expr {
-                    self.hash_expr(e);
-                }
-            },
-            ExprKind::Tup(tup) => {
-                self.hash_exprs(tup);
-            },
-            ExprKind::Array(v) => {
-                self.hash_exprs(v);
-            },
+            ExprKind::MethodCall(ref path, _, args, _) => (path, args).hash_spanless(sh, state),
+            ExprKind::ConstBlock(ref l_id) => l_id.body.hash_spanless(sh, state),
+            ExprKind::Repeat(ref e, ref l_id) => (e, l_id.body).hash_spanless(sh, state),
+            ExprKind::Ret(e) => e.hash_spanless(sh, state),
+            ExprKind::Path(ref qpath) => qpath.hash_spanless(sh, state),
+            ExprKind::Struct(p, f, e) => (p, f, e).hash_spanless(sh, state),
+            ExprKind::Array(e) | ExprKind::Tup(e) => e.hash_spanless(sh, state),
             ExprKind::Unary(lop, ref le) => {
-                std::mem::discriminant(&lop).hash(&mut self.s);
-                self.hash_expr(le);
+                std::mem::discriminant(&lop).hash(state);
+                le.hash_spanless(sh, state);
             },
         }
     }
-
-    pub fn hash_exprs(&mut self, e: &[Expr<'_>]) {
-        for e in e {
-            self.hash_expr(e);
+    ExprField<'_> => (self.ident, self.expr).hash_spanless(sh, state),
+    GenericArg<'_> => match *self {
+        GenericArg::Lifetime(l) => l.hash_spanless(sh, state),
+        GenericArg::Type(ref ty) => ty.hash_spanless(sh, state),
+        GenericArg::Const(ref ca) => ca.value.body.hash_spanless(sh, state),
+    }
+    Guard<'_> => match *self {
+        Guard::If(e) | Guard::IfLet(_, e) => e.hash_spanless(sh, state),
+    }
+    InlineAsm<'_> => {
+        self.template.hash_spanless(sh, state);
+        self.options.hash(state);
+        self.operands.len().hash(state);
+        for (op, _) in self.operands {
+            match op {
+                InlineAsmOperand::In { reg, expr } => {
+                    reg.hash(state);
+                    expr.hash_spanless(sh, state);
+                },
+                InlineAsmOperand::Out { reg, late, expr } => {
+                    (reg, late).hash(state);
+                    expr.hash_spanless(sh, state)
+                },
+                InlineAsmOperand::InOut { reg, late, expr } => {
+                    (reg, late).hash(state);
+                    expr.hash_spanless(sh, state);
+                },
+                InlineAsmOperand::SplitInOut {
+                    reg,
+                    late,
+                    in_expr,
+                    out_expr,
+                } => {
+                    (reg, late).hash(state);
+                    (in_expr, out_expr).hash_spanless(sh, state);
+                },
+                InlineAsmOperand::Const { anon_const } => anon_const.body.hash_spanless(sh, state),
+                InlineAsmOperand::Sym { expr } => expr.hash_spanless(sh, state),
+            }
         }
     }
-
-    pub fn hash_name(&mut self, n: Symbol) {
-        n.as_str().hash(&mut self.s);
+    InlineAsmTemplatePiece => match self {
+        InlineAsmTemplatePiece::String(s) => s.hash(state),
+        InlineAsmTemplatePiece::Placeholder {
+            operand_idx,
+            modifier,
+            span: _,
+        } => (operand_idx, modifier).hash(state),
     }
-
-    pub fn hash_qpath(&mut self, p: &QPath<'_>) {
-        match *p {
-            QPath::Resolved(_, ref path) => {
-                self.hash_path(path);
-            },
-            QPath::TypeRelative(_, ref path) => {
-                self.hash_name(path.ident.name);
-            },
-            QPath::LangItem(lang_item, ..) => {
-                std::mem::discriminant(&lang_item).hash(&mut self.s);
-            },
-        }
-        // self.maybe_typeck_results.unwrap().qpath_res(p, id).hash(&mut self.s);
-    }
-
-    pub fn hash_pat(&mut self, pat: &Pat<'_>) {
-        std::mem::discriminant(&pat.kind).hash(&mut self.s);
-        match pat.kind {
-            PatKind::Binding(ann, _, _, pat) => {
-                std::mem::discriminant(&ann).hash(&mut self.s);
-                if let Some(pat) = pat {
-                    self.hash_pat(pat);
-                }
-            },
-            PatKind::Box(pat) => self.hash_pat(pat),
-            PatKind::Lit(expr) => self.hash_expr(expr),
-            PatKind::Or(pats) => {
-                for pat in pats {
-                    self.hash_pat(pat);
-                }
-            },
-            PatKind::Path(ref qpath) => self.hash_qpath(qpath),
-            PatKind::Range(s, e, i) => {
-                if let Some(s) = s {
-                    self.hash_expr(s);
-                }
-                if let Some(e) = e {
-                    self.hash_expr(e);
-                }
-                std::mem::discriminant(&i).hash(&mut self.s);
-            },
-            PatKind::Ref(pat, mu) => {
-                self.hash_pat(pat);
-                std::mem::discriminant(&mu).hash(&mut self.s);
-            },
-            PatKind::Slice(l, m, r) => {
-                for pat in l {
-                    self.hash_pat(pat);
-                }
-                if let Some(pat) = m {
-                    self.hash_pat(pat);
-                }
-                for pat in r {
-                    self.hash_pat(pat);
-                }
-            },
-            PatKind::Struct(ref qpath, fields, e) => {
-                self.hash_qpath(qpath);
-                for f in fields {
-                    self.hash_name(f.ident.name);
-                    self.hash_pat(f.pat);
-                }
-                e.hash(&mut self.s)
-            },
-            PatKind::Tuple(pats, e) => {
-                for pat in pats {
-                    self.hash_pat(pat);
-                }
-                e.hash(&mut self.s);
-            },
-            PatKind::TupleStruct(ref qpath, pats, e) => {
-                self.hash_qpath(qpath);
-                for pat in pats {
-                    self.hash_pat(pat);
-                }
-                e.hash(&mut self.s);
-            },
-            PatKind::Wild => {},
-        }
-    }
-
-    pub fn hash_path(&mut self, path: &Path<'_>) {
-        match path.res {
-            // constant hash since equality is dependant on inter-expression context
-            Res::Local(_) => 1_usize.hash(&mut self.s),
-            _ => {
-                for seg in path.segments {
-                    self.hash_name(seg.ident.name);
-                }
-            },
-        }
-    }
-
-    pub fn hash_stmt(&mut self, b: &Stmt<'_>) {
-        std::mem::discriminant(&b.kind).hash(&mut self.s);
-
-        match &b.kind {
-            StmtKind::Local(local) => {
-                self.hash_pat(local.pat);
-                if let Some(ref init) = local.init {
-                    self.hash_expr(init);
-                }
-            },
-            StmtKind::Item(..) => {},
-            StmtKind::Expr(expr) | StmtKind::Semi(expr) => {
-                self.hash_expr(expr);
-            },
-        }
-    }
-
-    pub fn hash_guard(&mut self, g: &Guard<'_>) {
-        match g {
-            Guard::If(ref expr) | Guard::IfLet(_, ref expr) => {
-                self.hash_expr(expr);
-            },
-        }
-    }
-
-    pub fn hash_lifetime(&mut self, lifetime: Lifetime) {
-        std::mem::discriminant(&lifetime.name).hash(&mut self.s);
-        if let LifetimeName::Param(ref name) = lifetime.name {
-            std::mem::discriminant(name).hash(&mut self.s);
+    Ident => self.name.hash(state),
+    Label => self.ident.hash_spanless(sh, state),
+    Lifetime => {
+        std::mem::discriminant(&self.name).hash(state);
+        if let LifetimeName::Param(ref name) = self.name {
+            std::mem::discriminant(name).hash(state);
             match name {
-                ParamName::Plain(ref ident) => {
-                    ident.name.hash(&mut self.s);
-                },
-                ParamName::Fresh(ref size) => {
-                    size.hash(&mut self.s);
-                },
+                ParamName::Plain(ref ident) => ident.hash_spanless(sh, state),
+                ParamName::Fresh(ref size) => size.hash(state),
                 ParamName::Error => {},
             }
         }
     }
-
-    pub fn hash_ty(&mut self, ty: &Ty<'_>) {
-        std::mem::discriminant(&ty.kind).hash(&mut self.s);
-        match ty.kind {
-            TyKind::Slice(ty) => {
-                self.hash_ty(ty);
+    MutTy<'_> => {
+        self.ty.hash_spanless(sh, state);
+        self.mutbl.hash(state);
+    }
+    Pat<'_> => {
+        std::mem::discriminant(&self.kind).hash(state);
+        match self.kind {
+            PatKind::Binding(ann, _, _, pat) => {
+                std::mem::discriminant(&ann).hash(state);
+                pat.hash_spanless(sh, state);
             },
-            TyKind::Array(ty, anon_const) => {
-                self.hash_ty(ty);
-                self.hash_body(anon_const.body);
+            PatKind::Box(pat) => pat.hash_spanless(sh, state),
+            PatKind::Lit(expr) => expr.hash_spanless(sh, state),
+            PatKind::Or(pats) => pats.hash_spanless(sh, state),
+            PatKind::Path(ref qpath) => qpath.hash_spanless(sh, state),
+            PatKind::Range(s, e, i) => {
+                (s, e).hash_spanless(sh, state);
+                std::mem::discriminant(&i).hash(state);
             },
-            TyKind::Ptr(ref mut_ty) => {
-                self.hash_ty(&mut_ty.ty);
-                mut_ty.mutbl.hash(&mut self.s);
+            PatKind::Ref(pat, mu) => {
+                pat.hash_spanless(sh, state);
+                std::mem::discriminant(&mu).hash(state);
             },
-            TyKind::Rptr(lifetime, ref mut_ty) => {
-                self.hash_lifetime(lifetime);
-                self.hash_ty(&mut_ty.ty);
-                mut_ty.mutbl.hash(&mut self.s);
+            PatKind::Slice(l, m, r) => (l, m, r).hash_spanless(sh, state),
+            PatKind::Struct(ref qpath, fields, e) => {
+                (qpath, fields).hash_spanless(sh, state);
+                e.hash(state)
             },
-            TyKind::BareFn(bfn) => {
-                bfn.unsafety.hash(&mut self.s);
-                bfn.abi.hash(&mut self.s);
-                for arg in bfn.decl.inputs {
-                    self.hash_ty(&arg);
-                }
-                std::mem::discriminant(&bfn.decl.output).hash(&mut self.s);
-                match bfn.decl.output {
-                    FnRetTy::DefaultReturn(_) => {},
-                    FnRetTy::Return(ref ty) => {
-                        self.hash_ty(ty);
-                    },
-                }
-                bfn.decl.c_variadic.hash(&mut self.s);
+            PatKind::Tuple(pats, e) => {
+                pats.hash_spanless(sh, state);
+                e.hash(state);
             },
-            TyKind::Tup(ty_list) => {
-                for ty in ty_list {
-                    self.hash_ty(ty);
-                }
+            PatKind::TupleStruct(ref qpath, pats, e) => {
+                (qpath, pats).hash_spanless(sh, state);
+                e.hash(state);
             },
-            TyKind::Path(ref qpath) => self.hash_qpath(qpath),
-            TyKind::OpaqueDef(_, arg_list) => {
-                self.hash_generic_args(arg_list);
-            },
-            TyKind::TraitObject(_, lifetime, _) => {
-                self.hash_lifetime(lifetime);
-            },
-            TyKind::Typeof(anon_const) => {
-                self.hash_body(anon_const.body);
-            },
+            PatKind::Wild => {},
+        }
+    }
+    Path<'_> => match self.res {
+        // constant hash since equality is dependant on inter-expression context
+        Res::Local(_) => 1_u8.hash(state),
+        _ => self.segments.hash_spanless(sh, state),
+    }
+    PatField<'_> => (self.ident, self.pat).hash_spanless(sh, state),
+    PathSegment<'_> => (self.ident, self.args().args).hash_spanless(sh, state),
+    Stmt<'_> => {
+        std::mem::discriminant(&self.kind).hash(state);
+        match self.kind {
+            StmtKind::Local(local) => (local.pat, local.init).hash_spanless(sh, state),
+            StmtKind::Item(..) => {},
+            StmtKind::Expr(expr) | StmtKind::Semi(expr) => expr.hash_spanless(sh, state),
+        }
+    }
+    Ty<'_> => {
+        std::mem::discriminant(&self.kind).hash(state);
+        match self.kind {
+            TyKind::Slice(ty) => ty.hash_spanless(sh, state),
+            TyKind::Array(ty, anon_const) => (ty, anon_const.body).hash_spanless(sh, state),
+            TyKind::Ptr(ref mut_ty) => mut_ty.hash_spanless(sh, state),
+            TyKind::Rptr(lifetime, ref mut_ty) => (lifetime, mut_ty).hash_spanless(sh, state),
+            TyKind::BareFn(bfn) => bfn.hash_spanless(sh, state),
+            TyKind::Tup(tys) => tys.hash_spanless(sh, state),
+            TyKind::Path(ref qpath) => qpath.hash_spanless(sh, state),
+            TyKind::OpaqueDef(_, arg_list) => arg_list.hash_spanless(sh, state),
+            TyKind::TraitObject(_, lifetime, _) => lifetime.hash_spanless(sh, state),
+            TyKind::Typeof(anon_const) => anon_const.body.hash_spanless(sh, state),
             TyKind::Err | TyKind::Infer | TyKind::Never => {},
         }
     }
-
-    pub fn hash_body(&mut self, body_id: BodyId) {
-        // swap out TypeckResults when hashing a body
-        let old_maybe_typeck_results = self.maybe_typeck_results.replace(self.cx.tcx.typeck_body(body_id));
-        self.hash_expr(&self.cx.tcx.hir().body(body_id).value);
-        self.maybe_typeck_results = old_maybe_typeck_results;
+    QPath<'_> => match *self {
+        QPath::Resolved(_, ref path) => path.hash_spanless(sh, state),
+        QPath::TypeRelative(_, ref path) => path.ident.hash_spanless(sh, state),
+        QPath::LangItem(lang_item, ..) => lang_item.hash(state),
     }
+}
 
-    fn hash_generic_args(&mut self, arg_list: &[GenericArg<'_>]) {
-        for arg in arg_list {
-            match *arg {
-                GenericArg::Lifetime(l) => self.hash_lifetime(l),
-                GenericArg::Type(ref ty) => self.hash_ty(ty),
-                GenericArg::Const(ref ca) => self.hash_body(ca.value.body),
-            }
+impl<'a, T> SpanlessHash for &T
+where
+    T: ?Sized + SpanlessHash,
+{
+    fn hash_spanless<H: Hasher>(&self, sh: &mut SpanlessHasher<'_, '_>, state: &mut H) {
+        (*self).hash_spanless(sh, state);
+    }
+}
+
+impl<'a, T> SpanlessHash for [T]
+where
+    T: SpanlessHash,
+{
+    fn hash_spanless<H: Hasher>(&self, sh: &mut SpanlessHasher<'_, '_>, state: &mut H) {
+        self.len().hash(state);
+        for e in self {
+            e.hash_spanless(sh, state);
         }
     }
 }
+
+impl<'a, T> SpanlessHash for Option<T>
+where
+    T: SpanlessHash,
+{
+    fn hash_spanless<H: Hasher>(&self, sh: &mut SpanlessHasher<'_, '_>, state: &mut H) {
+        self.is_some().hash(state);
+        if let Some(e) = self {
+            e.hash_spanless(sh, state);
+        }
+    }
+}
+
+macro_rules! spanless_hash_tuple {
+    ($($a:ident)*) => {
+        impl<$($a: SpanlessHash),*> SpanlessHash for ($($a),*) {
+            fn hash_spanless<H: Hasher>(&self, sh: &mut SpanlessHasher<'_, '_>, state: &mut H) {
+                #[allow(non_snake_case)]
+                let ($(ref $a),*) = *self;
+                $($a.hash_spanless(sh, state);)*
+            }
+        }
+    };
+}
+
+spanless_hash_tuple!(A B);
+spanless_hash_tuple!(A B C);

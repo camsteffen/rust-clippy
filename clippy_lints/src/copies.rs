@@ -1,8 +1,8 @@
 use clippy_utils::diagnostics::{span_lint_and_note, span_lint_and_then};
 use clippy_utils::source::{first_line_of_span, indent_of, reindent_multiline, snippet, snippet_opt};
 use clippy_utils::{
-    both, count_eq, eq_expr_value, get_enclosing_block, get_parent_expr, if_sequence, in_macro, is_else_clause,
-    run_lints, search_same, ContainsName, SpanlessEq, SpanlessHash,
+    both, count_eq, eq_expr_value, get_enclosing_block, get_parent_expr, hash_spanless_fx, if_sequence, in_macro,
+    is_else_clause, run_lints, search_same, ContainsName, SpanlessEq,
 };
 use if_chain::if_chain;
 use rustc_data_structures::fx::FxHashSet;
@@ -588,11 +588,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UsedValueFinderVisitor<'a, 'tcx> {
 
 /// Implementation of `IFS_SAME_COND`.
 fn lint_same_cond(cx: &LateContext<'_>, conds: &[&Expr<'_>]) {
-    let hash: &dyn Fn(&&Expr<'_>) -> u64 = &|expr| -> u64 {
-        let mut h = SpanlessHash::new(cx);
-        h.hash_expr(expr);
-        h.finish()
-    };
+    let hash: &dyn Fn(&&Expr<'_>) -> u64 = &|expr| -> u64 { hash_spanless_fx(cx, expr) };
 
     let eq: &dyn Fn(&&Expr<'_>, &&Expr<'_>) -> bool = &|&lhs, &rhs| -> bool { eq_expr_value(cx, lhs, rhs) };
 
@@ -610,11 +606,7 @@ fn lint_same_cond(cx: &LateContext<'_>, conds: &[&Expr<'_>]) {
 
 /// Implementation of `SAME_FUNCTIONS_IN_IF_CONDITION`.
 fn lint_same_fns_in_if_cond(cx: &LateContext<'_>, conds: &[&Expr<'_>]) {
-    let hash: &dyn Fn(&&Expr<'_>) -> u64 = &|expr| -> u64 {
-        let mut h = SpanlessHash::new(cx);
-        h.hash_expr(expr);
-        h.finish()
-    };
+    let hash: &dyn Fn(&&Expr<'_>) -> u64 = &|expr| -> u64 { hash_spanless_fx(cx, expr) };
 
     let eq: &dyn Fn(&&Expr<'_>, &&Expr<'_>) -> bool = &|&lhs, &rhs| -> bool {
         // Do not lint if any expr originates from a macro

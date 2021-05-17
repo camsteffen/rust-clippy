@@ -1,6 +1,6 @@
 use clippy_utils::diagnostics::span_lint_and_help;
 use clippy_utils::source::{snippet, snippet_with_applicability};
-use clippy_utils::{in_macro, SpanlessHash};
+use clippy_utils::{hash_spanless_fx, in_macro};
 use if_chain::if_chain;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::unhash::UnhashMap;
@@ -96,11 +96,6 @@ impl TraitBounds {
         if in_macro(gen.span) {
             return;
         }
-        let hash = |ty| -> u64 {
-            let mut hasher = SpanlessHash::new(cx);
-            hasher.hash_ty(ty);
-            hasher.finish()
-        };
         let mut map = UnhashMap::default();
         let mut applicability = Applicability::MaybeIncorrect;
         for bound in gen.where_clause.predicates {
@@ -108,7 +103,7 @@ impl TraitBounds {
                 if let WherePredicate::BoundPredicate(ref p) = bound;
                 if p.bounds.len() as u64 <= self.max_trait_bounds;
                 if !in_macro(p.span);
-                let h = hash(p.bounded_ty);
+                let h = hash_spanless_fx(cx, p.bounded_ty);
                 if let Some(ref v) = map.insert(h, p.bounds.iter().collect::<Vec<_>>());
 
                 then {
